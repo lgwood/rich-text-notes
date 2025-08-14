@@ -16,5 +16,5 @@ Simply click the `+` button to make a new note
 
 ----------------
 
-* Notes Enhanced DOES NOT save notes to the runelite profile
-* Notes are created Locally
+* Notes Enhanced DOES NOT save notes to your runelite profile
+* to find your notes click `...` -> `Open Notes Directory`
