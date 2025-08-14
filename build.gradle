@@ -26,7 +26,7 @@ dependencies {
 	testImplementation group: 'net.runelite', name:'jshell', version: runeLiteVersion
 }
 
-group = 'dev.seafoo.notesenhanced'
+group = 'dev.seafoo.richtextnotes'
 version = '1.0'
 
 tasks.withType(JavaCompile).configureEach {
@@ -37,7 +37,7 @@ tasks.withType(JavaCompile).configureEach {
 tasks.register('shadowJar', Jar) {
 	dependsOn configurations.testRuntimeClasspath
 	manifest {
-		attributes('Main-Class': 'dev.seafoo.notesenhanced.NotesEnhancedPluginTest', 'Multi-Release': true)
+		attributes('Main-Class': 'dev.seafoo.richtextnotes.RichTextNotesPluginTest', 'Multi-Release': true)
 	}
 
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
