@@ -1,8 +1,8 @@
-# Notes Enhanced
+# Rich Text Notes
 
-![](https://github.com/lgwood/notes-enhanced/blob/main/readme-images/notes_enhanced_example.png)
+![](https://github.com/lgwood/rich-text-notes/blob/main/readme-images/rich_text_notes_example.png)
 
-Notes Enhanced is an enhanced version of the built-in "notes" plugin.
+Rich Text Notes is an enhanced version of the built-in "notes" plugin.
 
 It includes a number of features you might find in a full-fledged text editor like:
 * Font Size
@@ -15,6 +15,23 @@ It includes a number of features you might find in a full-fledged text editor li
 Simply click the `+` button to make a new note
 
 ----------------
+## CONTROLS
 
-* Notes Enhanced DOES NOT save notes to your runelite profile
+- `Ctrl + C | Copy`
+- `Ctrl + V | Paste`
+
+
+- `Ctrl + Z | Undo`
+- `Ctrl + Y | Redo`
+
+
+- `Ctrl + I | Italic`
+- `Ctrl + B | Bold`
+- `Ctrl + Shift + S | Strikethrough`
+
+
+
+----------------
+
+* Rich Text Notes DOES NOT save notes to your runelite profile
 * to find your notes click `...` -> `Open Notes Directory`
