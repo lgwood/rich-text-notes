@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
+import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.RuneLite;
 import net.runelite.client.config.ConfigManager;
@@ -30,6 +31,7 @@ public class FileStorageService
 
 	private static final String DEFAULT_PROFILE = "default_profile";
 
+	@Inject
 	private final Gson gson;
 	private final Path baseDirectory;
 	private final ConfigManager configManager;
