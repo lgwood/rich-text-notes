@@ -1,5 +1,6 @@
 package dev.seafoo.notesenhanced;
 
+import com.google.gson.Gson;
 import com.google.inject.Provides;
 import dev.seafoo.notesenhanced.services.FileStorageService;
 import dev.seafoo.notesenhanced.services.ItemIconService;
@@ -39,6 +40,9 @@ public class NotesEnhancedPlugin extends Plugin
 	@Inject
 	private ItemIconService itemIconService;
 
+	@Inject
+	private Gson gson;
+
 	private NotesPanel panel;
 	private NavigationButton navButton;
 	private FileStorageService storageService;
@@ -55,7 +59,7 @@ public class NotesEnhancedPlugin extends Plugin
 		try
 		{
 			// Initialize storage service with configManager
-			storageService = new FileStorageService(configManager);
+			storageService = new FileStorageService(configManager, gson);
 
 			log.debug("Notes Enhanced Initialized with profile: {}", storageService.getCurrentProfileName());
 

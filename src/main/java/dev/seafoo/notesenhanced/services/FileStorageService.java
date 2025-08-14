@@ -1,22 +1,30 @@
 package dev.seafoo.notesenhanced.services;
 
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
+import com.google.gson.JsonDeserializationContext;
+import com.google.gson.JsonDeserializer;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.google.gson.JsonPrimitive;
+import com.google.gson.JsonSerializationContext;
+import com.google.gson.JsonSerializer;
 import dev.seafoo.notesenhanced.models.EditorLayout;
 import dev.seafoo.notesenhanced.models.NoteMetadata;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
-import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.RuneLite;
 import net.runelite.client.config.ConfigManager;
@@ -31,17 +39,19 @@ public class FileStorageService
 
 	private static final String DEFAULT_PROFILE = "default_profile";
 
-	@Inject
+	private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+
+
 	private final Gson gson;
 	private final Path baseDirectory;
 	private final ConfigManager configManager;
 	private String currentProfileDirectory;
 
-	public FileStorageService(ConfigManager configManager)
+	public FileStorageService(ConfigManager configManager, Gson gson)
 	{
 		this.configManager = configManager;
-		this.gson = new GsonBuilder()
-			.setPrettyPrinting()
+		this.gson = gson.newBuilder().setPrettyPrinting()
+			.registerTypeAdapter(LocalDateTime.class, new LocalDateTimeTypeAdapter())
 			.create();
 		this.baseDirectory = RuneLite.RUNELITE_DIR.toPath().resolve(NOTES_ENHANCED_DIR);
 
@@ -372,10 +382,6 @@ public class FileStorageService
 			});
 	}
 
-	/**
-	 * Utility methods
-	 */
-
 	private String generateNoteId()
 	{
 		return "note_" + System.currentTimeMillis() + "_" + new Random().nextInt(1000);
@@ -391,4 +397,83 @@ public class FileStorageService
 	{
 		return getProfileDirectory().resolve(NOTES_SUBDIR);
 	}
+
+	private static class LocalDateTimeTypeAdapter implements JsonSerializer<LocalDateTime>, JsonDeserializer<LocalDateTime>
+	{
+		@Override
+		public JsonElement serialize(LocalDateTime localDateTime, Type type, JsonSerializationContext context)
+		{
+			// Serialize as ISO string
+			return new JsonPrimitive(localDateTime.format(DATE_TIME_FORMATTER));
+		}
+
+		@Override
+		public LocalDateTime deserialize(JsonElement jsonElement, Type type, JsonDeserializationContext context)
+			throws JsonParseException
+		{
+			try
+			{
+				// Handle the case where it's already a primitive string
+				if (jsonElement.isJsonPrimitive())
+				{
+					String dateTimeString = jsonElement.getAsString();
+					return LocalDateTime.parse(dateTimeString, DATE_TIME_FORMATTER);
+				}
+
+				// Handle the complex object format that's causing the issue
+				if (jsonElement.isJsonObject())
+				{
+					JsonObject dateTimeObj = jsonElement.getAsJsonObject();
+
+					// Check if it has the nested structure: {"date": {...}, "time": {...}}
+					if (dateTimeObj.has("date") && dateTimeObj.has("time"))
+					{
+						JsonObject dateObj = dateTimeObj.getAsJsonObject("date");
+						JsonObject timeObj = dateTimeObj.getAsJsonObject("time");
+
+						int year = dateObj.get("year").getAsInt();
+						int month = dateObj.get("month").getAsInt();
+						int day = dateObj.get("day").getAsInt();
+
+						int hour = timeObj.get("hour").getAsInt();
+						int minute = timeObj.get("minute").getAsInt();
+						int second = timeObj.get("second").getAsInt();
+						int nano = timeObj.has("nano") ? timeObj.get("nano").getAsInt() : 0;
+
+						return LocalDateTime.of(year, month, day, hour, minute, second, nano);
+					}
+
+					// Handle direct object format: {"year": 2025, "month": 8, ...}
+					if (dateTimeObj.has("year") && dateTimeObj.has("month"))
+					{
+						int year = dateTimeObj.get("year").getAsInt();
+						int month = dateTimeObj.get("month").getAsInt();
+						int day = dateTimeObj.get("day").getAsInt();
+						int hour = dateTimeObj.has("hour") ? dateTimeObj.get("hour").getAsInt() : 0;
+						int minute = dateTimeObj.has("minute") ? dateTimeObj.get("minute").getAsInt() : 0;
+						int second = dateTimeObj.has("second") ? dateTimeObj.get("second").getAsInt() : 0;
+						int nano = dateTimeObj.has("nano") ? dateTimeObj.get("nano").getAsInt() : 0;
+
+						return LocalDateTime.of(year, month, day, hour, minute, second, nano);
+					}
+				}
+
+				// Fallback - try to parse as string
+				String dateTimeString = jsonElement.getAsString();
+				return LocalDateTime.parse(dateTimeString, DATE_TIME_FORMATTER);
+
+			}
+			catch (DateTimeParseException e)
+			{
+				log.warn("Failed to parse LocalDateTime from: {}, using current time", jsonElement, e);
+				return LocalDateTime.now();
+			}
+			catch (Exception e)
+			{
+				log.error("Unexpected error parsing LocalDateTime from: {}, using current time", jsonElement, e);
+				return LocalDateTime.now();
+			}
+		}
+	}
+
 }
