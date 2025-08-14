@@ -301,7 +301,7 @@ public class InlineItemAutoComplete
 		try
 		{
 			// Calculate popup position
-			Rectangle caretBounds = textPane.modelToView(textPane.getCaretPosition());
+			Rectangle caretBounds = (Rectangle) textPane.modelToView2D(textPane.getCaretPosition());
 			if (caretBounds != null && textPane.isShowing())
 			{
 

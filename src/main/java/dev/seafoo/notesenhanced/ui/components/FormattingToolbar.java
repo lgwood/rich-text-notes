@@ -551,7 +551,7 @@ public class FormattingToolbar extends JToolBar implements CaretListener
 
 	private String getShortcutText(String key, boolean shift)
 	{
-		int shortcutKeyMask = Toolkit.getDefaultToolkit().getMenuShortcutKeyMask();
+		int shortcutKeyMask = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
 		String modifier = shortcutKeyMask == KeyEvent.CTRL_DOWN_MASK ? "Ctrl" : "Cmd";
 		String shiftText = shift ? "Shift+" : "";
 		return modifier + "+" + shiftText + key;
