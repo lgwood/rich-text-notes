@@ -27,7 +27,7 @@ dependencies {
 }
 
 group = 'dev.seafoo.richtextnotes'
-version = '1.0'
+version = '1.1'
 
 tasks.withType(JavaCompile).configureEach {
 	options.encoding = 'UTF-8'
@@ -37,7 +37,7 @@ tasks.withType(JavaCompile).configureEach {
 tasks.register('shadowJar', Jar) {
 	dependsOn configurations.testRuntimeClasspath
 	manifest {
-		attributes('Main-Class': 'dev.seafoo.richtextnotes.RichTextNotesPluginTest', 'Multi-Release': true)
+		attributes('Main-Class': 'dev.seafoo.richtextnotes.RichTextNotesTest', 'Multi-Release': true)
 	}
 
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
