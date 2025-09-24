@@ -73,7 +73,7 @@ public class RichTextNotesPlugin extends Plugin
 			navButton = NavigationButton.builder()
 				.tooltip("Rich Text Notes")
 				.icon(icon)
-				.priority(7)
+				.priority(config.menuPriority())
 				.panel(panel)
 				.build();
 

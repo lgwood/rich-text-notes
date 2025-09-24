@@ -7,6 +7,7 @@ import java.awt.Toolkit;
 import java.awt.datatransfer.Clipboard;
 import java.awt.event.ActionEvent;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import javax.swing.JTextPane;
 import javax.swing.text.AttributeSet;
@@ -92,8 +93,8 @@ public class EnhancedCopyAction extends TextAction
 		{
 			StyledDocument doc = textPane.getStyledDocument();
 
-			// First pass: collect all colors used in selection
-			Map<Color, Integer> colorMap = new HashMap<>();
+			// First pass: collect all colors used in selection, LinkedHashMap preserves colour order
+			Map<Color, Integer> colorMap = new LinkedHashMap<>();
 			collectColorsInRange(doc, start, end, colorMap);
 
 			// Build minimal RTF fragment

@@ -26,4 +26,14 @@ public interface RichTextNotesConfig extends Config
 	{
 		return 5;
 	}
+
+	@ConfigItem(
+		keyName = "menuPriority",
+		name = "Sidebar Priority",
+		description = "Adjust the runelite sidebar priority. Lower priority => higher on sidebar. Restart the client to take effect"
+	)
+	default int menuPriority()
+	{
+		return 7;
+	}
 }
