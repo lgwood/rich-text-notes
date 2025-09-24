@@ -21,7 +21,6 @@ import javax.swing.text.AttributeSet;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.Document;
-import javax.swing.text.Element;
 import javax.swing.text.MutableAttributeSet;
 import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.Style;
@@ -141,56 +140,21 @@ public class NotesEnhancedEditorKit extends RTFEditorKit
 	 */
 	private void copyDocumentContent(StyledDocument sourceDoc, StyledDocument destDoc) throws BadLocationException
 	{
-		Element root = sourceDoc.getDefaultRootElement();
-		copyElementContent(sourceDoc, destDoc, root, 0);
-	}
-
-	/**
-	 * Recursively copy element content with all formatting and icons
-	 */
-	private int copyElementContent(StyledDocument sourceDoc, StyledDocument destDoc, Element element, int destPos)
-		throws BadLocationException
-	{
-
-		if (element.isLeaf())
+		int sourceLength = sourceDoc.getLength();
+		if (sourceLength == 0)
 		{
-			int elemStart = element.getStartOffset();
-			int elemEnd = element.getEndOffset();
-
-			if (elemEnd > elemStart)
-			{
-				AttributeSet attrs = element.getAttributes();
-
-				// Check if this element contains an icon
-				Object iconAttr = attrs.getAttribute(StyleConstants.IconAttribute);
-				if (iconAttr != null)
-				{
-					// Copy icon with all its attributes
-					destDoc.insertString(destPos, " ", attrs);
-					return destPos + 1;
-				}
-				else
-				{
-					// Copy regular text with attributes
-					String text = sourceDoc.getText(elemStart, elemEnd - elemStart);
-					if (!text.isEmpty())
-					{
-						destDoc.insertString(destPos, text, attrs);
-						return destPos + text.length();
-					}
-				}
-			}
-		}
-		else
-		{
-			// Process child elements
-			for (int i = 0; i < element.getElementCount(); i++)
-			{
-				destPos = copyElementContent(sourceDoc, destDoc, element.getElement(i), destPos);
-			}
+			return;
 		}
 
-		return destPos;
+		// Copy character by character with exact attributes to preserve structure
+		for (int i = 0; i < sourceLength; i++)
+		{
+			String ch = sourceDoc.getText(i, 1);
+			AttributeSet attrs = sourceDoc.getCharacterElement(i).getAttributes();
+
+			// Insert into destination at the same position
+			destDoc.insertString(i, ch, attrs);
+		}
 	}
 
 	/**
@@ -203,6 +167,16 @@ public class NotesEnhancedEditorKit extends RTFEditorKit
 
 		// First do the regular RTF read
 		super.read(in, doc, pos);
+
+		// RTF reader adds a trailing newline for \par tags - remove it if present
+		if (doc.getLength() > 0)
+		{
+			String lastChar = doc.getText(doc.getLength() - 1, 1);
+			if ("\n".equals(lastChar))
+			{
+				doc.remove(doc.getLength() - 1, 1);
+			}
+		}
 
 		// Then convert placeholders back to icons
 		if (doc instanceof NotesEnhancedDocument && itemIconService != null)
@@ -324,6 +298,7 @@ public class NotesEnhancedEditorKit extends RTFEditorKit
 		Style base = doc.addStyle("base", defaultStyle);
 		StyleConstants.setFontFamily(base, fontFamily);
 		StyleConstants.setFontSize(base, FONT_SIZE_NORMAL);
+		StyleConstants.setForeground(base, Color.WHITE);
 
 		// Normal text style (16pt) - this is the default
 		Style normal = doc.addStyle(STYLE_NORMAL, base);
