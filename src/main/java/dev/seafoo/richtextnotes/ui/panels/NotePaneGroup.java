@@ -40,6 +40,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JTabbedPane;
+import javax.swing.JTextField;
 import javax.swing.JTextPane;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
@@ -420,8 +421,8 @@ public class NotePaneGroup extends JPanel
 
 		menu.addSeparator();
 
-		JMenuItem openDirectory = new JMenuItem("Open Notes Directory");
-		openDirectory.addActionListener(e -> openNotesDirectory());
+		JMenuItem openDirectory = new JMenuItem("Show Notes Directory");
+		openDirectory.addActionListener(e -> showNotesDirectory());
 		menu.add(openDirectory);
 
 		menu.show(menuButton, 0, menuButton.getHeight());
@@ -463,25 +464,11 @@ public class NotePaneGroup extends JPanel
 	}
 
 
-	private void openNotesDirectory()
+	private void showNotesDirectory()
 	{
-		try
-		{
-			java.awt.Desktop desktop = java.awt.Desktop.getDesktop();
-			desktop.open(storageService.getProfileDirectory().toFile());
-		}
-		catch (Exception e)
-		{
-			log.error("Failed to open notes directory", e);
-
-			String directoryPath = storageService.getNotesDirectory().toString();
-			JOptionPane.showMessageDialog(
-				this,
-				"Failed to open directory automatically.\nNotes are stored at:\n" + directoryPath,
-				"Notes Directory",
-				JOptionPane.INFORMATION_MESSAGE
-			);
-		}
+		JTextField path = new JTextField(storageService.getProfileDirectory().toString());
+		path.setEditable(false);
+		JOptionPane.showMessageDialog(this, path, "Notes Directory", JOptionPane.PLAIN_MESSAGE);
 	}
 
 	private void editNoteTags(String noteId)

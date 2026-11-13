@@ -9,7 +9,6 @@ import dev.seafoo.richtextnotes.ui.popups.InlineItemAutoComplete;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
-import java.awt.KeyboardFocusManager;
 import java.awt.Toolkit;
 import java.awt.event.FocusEvent;
 import java.awt.event.FocusListener;
@@ -123,10 +122,10 @@ public class RichTextEditor extends JPanel
 			@Override
 			public void focusLost(FocusEvent e)
 			{
+				Component focusOwner = e.getOppositeComponent();
+
 				// Small delay to prevent flickering when clicking on toolbar buttons
 				SwingUtilities.invokeLater(() -> {
-					// Check if focus went to a toolbar component
-					Component focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
 					if (focusOwner != null && SwingUtilities.isDescendingFrom(focusOwner, toolbar))
 					{
 						// Focus went to toolbar, don't hide it
