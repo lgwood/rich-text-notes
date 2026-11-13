@@ -47,5 +47,5 @@ Click the cloud button on a note to sync it through your RuneLite account.
 ----------------
 
 * Notes are saved in `.runelite/rich-text-notes`. Synced notes are saved to your RuneLite profile
-* To find your notes click `...` -> `Open Notes Directory`
+* To find your notes click `...` -> `Show Notes Directory`
 * Notes from old versions can be found in `backups/before-v2`
