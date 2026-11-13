@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import net.runelite.client.util.Filepath;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -150,7 +151,7 @@ public class CloudSyncServiceTest
 
 		Computer() throws IOException
 		{
-			storage = new FileStorageService(null, new Gson(), folder.newFolder().toPath());
+			storage = new FileStorageService(null, new Gson(), Filepath.Unchecked.getRooted(folder.newFolder().toPath()));
 			sync = new CloudSyncService(null, storage)
 			{
 				@Override
