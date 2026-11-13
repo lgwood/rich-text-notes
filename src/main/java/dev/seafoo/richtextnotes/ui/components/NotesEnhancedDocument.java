@@ -6,10 +6,8 @@ import java.util.Collections;
 import java.util.List;
 import javax.swing.Icon;
 import javax.swing.event.UndoableEditEvent;
-import javax.swing.text.AttributeSet;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.DefaultStyledDocument;
-import javax.swing.text.Element;
 import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.StyleConstants;
 import lombok.extern.slf4j.Slf4j;
@@ -24,7 +22,7 @@ public class NotesEnhancedDocument extends DefaultStyledDocument
 
 	private static final String ICON_PLACEHOLDER_PREFIX = "{{ITEM:";
 	private static final String ICON_PLACEHOLDER_SUFFIX = "}}";
-	private static final String ICON_ATTRIBUTE = "item-icon-data";
+	public static final String ICON_ATTRIBUTE = "item-icon-data";
 
 	private boolean processingIcons = false;
 
@@ -43,52 +41,6 @@ public class NotesEnhancedDocument extends DefaultStyledDocument
 		if (!processingIcons)
 		{
 			super.fireUndoableEditUpdate(e);
-		}
-	}
-
-	/**
-	 * Convert all icons in the document to text placeholders
-	 * Call this before saving to RTF
-	 */
-	public void convertIconsToPlaceholders()
-	{
-		if (processingIcons)
-		{
-			return;
-		}
-
-		processingIcons = true;
-		try
-		{
-			List<IconPosition> iconPositions = findAllIcons();
-
-			// Process in reverse order to maintain positions
-			Collections.reverse(iconPositions);
-
-			for (IconPosition iconPos : iconPositions)
-			{
-				try
-				{
-					// Remove the icon character
-					remove(iconPos.position, 1);
-
-					// Insert placeholder text with quantity
-					String placeholder = createPlaceholder(iconPos.itemName, iconPos.itemId, iconPos.itemQuantity);
-					insertString(iconPos.position, placeholder, null);
-
-				}
-				catch (BadLocationException e)
-				{
-					log.error("Failed to convert icon at position {}", iconPos.position, e);
-				}
-			}
-
-			log.debug("Converted {} icons to placeholders", iconPositions.size());
-
-		}
-		finally
-		{
-			processingIcons = false;
 		}
 	}
 
@@ -162,64 +114,6 @@ public class NotesEnhancedDocument extends DefaultStyledDocument
 		finally
 		{
 			processingIcons = false;
-		}
-	}
-
-	/**
-	 * Find all icon positions in the document
-	 */
-	private List<IconPosition> findAllIcons()
-	{
-		List<IconPosition> positions = new ArrayList<>();
-
-		Element root = getDefaultRootElement();
-		scanElementForIcons(root, positions);
-
-		return positions;
-	}
-
-	private void scanElementForIcons(Element element, List<IconPosition> positions)
-	{
-		if (element.isLeaf())
-		{
-			AttributeSet attrs = element.getAttributes();
-
-			// Check if this element has an icon
-			Object icon = attrs.getAttribute(StyleConstants.IconAttribute);
-			if (icon != null)
-			{
-				// Try to get our custom icon data
-				Object iconData = attrs.getAttribute(ICON_ATTRIBUTE);
-
-				if (iconData instanceof IconData)
-				{
-					IconData data = (IconData) iconData;
-					positions.add(new IconPosition(
-						element.getStartOffset(),
-						data.itemName,
-						data.itemId,
-						data.itemQuantity
-					));
-				}
-				else
-				{
-					// Fallback - try to extract from icon filename or use default
-					positions.add(new IconPosition(
-						element.getStartOffset(),
-						"unknown_item",
-						0,
-						1 // Default quantity
-					));
-				}
-			}
-		}
-		else
-		{
-			// Recursively check child elements
-			for (int i = 0; i < element.getElementCount(); i++)
-			{
-				scanElementForIcons(element.getElement(i), positions);
-			}
 		}
 	}
 
@@ -320,28 +214,7 @@ public class NotesEnhancedDocument extends DefaultStyledDocument
 		}
 	}
 
-	private String createPlaceholder(String itemName, int itemId, int itemQuantity)
-	{
-		return ICON_PLACEHOLDER_PREFIX + itemId + ":" + itemName + ":" + itemQuantity + ICON_PLACEHOLDER_SUFFIX;
-	}
-
 	// Helper classes
-
-	private static class IconPosition
-	{
-		final int position;
-		final String itemName;
-		final int itemId;
-		final int itemQuantity;
-
-		IconPosition(int position, String itemName, int itemId, int itemQuantity)
-		{
-			this.position = position;
-			this.itemName = itemName;
-			this.itemId = itemId;
-			this.itemQuantity = itemQuantity;
-		}
-	}
 
 	private static class PlaceholderInfo
 	{

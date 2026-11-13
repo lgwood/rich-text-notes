@@ -2,7 +2,9 @@ package dev.seafoo.richtextnotes.ui.components;
 
 import dev.seafoo.richtextnotes.RichTextNotesConfig;
 import dev.seafoo.richtextnotes.models.Note;
+import dev.seafoo.richtextnotes.models.NoteContentV2;
 import dev.seafoo.richtextnotes.services.ItemIconService;
+import dev.seafoo.richtextnotes.services.NoteSerializerV2;
 import dev.seafoo.richtextnotes.ui.popups.InlineItemAutoComplete;
 import java.awt.BorderLayout;
 import java.awt.Component;
@@ -13,7 +15,6 @@ import java.awt.event.FocusEvent;
 import java.awt.event.FocusListener;
 import java.awt.event.KeyEvent;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import javax.swing.ActionMap;
 import javax.swing.BorderFactory;
@@ -27,6 +28,8 @@ import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.StyledDocument;
 import javax.swing.undo.UndoManager;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -70,13 +73,29 @@ public class RichTextEditor extends JPanel
 		this.itemIconService = itemIconService;
 		this.config = config;
 
-		setupEditor();
+		setupEditor(null);
 		setupUndoRedo();
 		loadContent();
 		setupKeyboardShortcuts();
 	}
 
-	private void setupEditor()
+	/**
+	 * A second view of a note that's already open in another pane. It shares that editor's
+	 * document and undo history, so both panes always show the same text.
+	 */
+	public RichTextEditor(RichTextEditor openElsewhere, RichTextNotesConfig config)
+	{
+		this.note = openElsewhere.note;
+		this.changeCallback = openElsewhere.changeCallback;
+		this.itemIconService = openElsewhere.itemIconService;
+		this.config = config;
+
+		setupEditor(openElsewhere.textPane.getStyledDocument());
+		useUndoManager(openElsewhere.undoManager);
+		setupKeyboardShortcuts();
+	}
+
+	private void setupEditor(StyledDocument sharedDocument)
 	{
 		setLayout(new BorderLayout());
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -84,6 +103,10 @@ public class RichTextEditor extends JPanel
 		// Create the editor kit with icon service
 		editorKit = new NotesEnhancedEditorKit(itemIconService);
 		textPane = editorKit.createTextPane();
+		if (sharedDocument != null)
+		{
+			textPane.setDocument(sharedDocument);
+		}
 
 		// Configure text pane
 		textPane.setBorder(new EmptyBorder(10, 10, 10, 10));
@@ -138,6 +161,11 @@ public class RichTextEditor extends JPanel
 		hideToolbar();
 		add(scrollPane, BorderLayout.CENTER);
 
+		if (sharedDocument != null)
+		{
+			return; // the editor that owns the document already tracks changes
+		}
+
 		// Add document listener for change tracking
 		textPane.getDocument().addDocumentListener(new DocumentListener()
 		{
@@ -181,6 +209,13 @@ public class RichTextEditor extends JPanel
 				undoManager.addEdit(e.getEdit());
 			}
 		});
+
+		useUndoManager(undoManager);
+	}
+
+	private void useUndoManager(UndoManager undoManager)
+	{
+		this.undoManager = undoManager;
 
 		// Configure the undo/redo actions with our undo manager
 		NotesEnhancedEditorKit.UndoAction undoAction =
@@ -231,7 +266,7 @@ public class RichTextEditor extends JPanel
 
 	private void loadContent()
 	{
-		if (note == null || note.getRtfContent() == null)
+		if (note == null || (note.getContentV2() == null && note.getRtfV1() == null))
 		{
 			return;
 		}
@@ -247,7 +282,13 @@ public class RichTextEditor extends JPanel
 				log.debug("Cleared undo history for content load");
 			}
 
-			String content = note.getRtfContent();
+			if (note.getContentV2() != null)
+			{
+				NoteSerializerV2.toDocument(note.getContentV2(), textPane.getStyledDocument(), itemIconService);
+				return;
+			}
+
+			String content = note.getRtfV1();
 
 			if (content.trim().isEmpty())
 			{
@@ -269,8 +310,16 @@ public class RichTextEditor extends JPanel
 		catch (Exception e)
 		{
 			log.error("Failed to load note content", e);
-			// Fallback to plain text
-			textPane.setText(note.getRtfContent() != null ? note.getRtfContent() : "");
+			// Plain text rather than an empty note that would be saved over the file (setText would parse RTF)
+			String text = note.getContentV2() != null ? note.getContentV2().getText() : note.getRtfV1();
+			try
+			{
+				textPane.getDocument().remove(0, textPane.getDocument().getLength());
+				textPane.getDocument().insertString(0, text != null ? text : "", null);
+			}
+			catch (BadLocationException ignored)
+			{
+			}
 		}
 		finally
 		{
@@ -378,23 +427,9 @@ public class RichTextEditor extends JPanel
 		}
 	}
 
-	/**
-	 * Get the current content as RTF string
-	 * Icons are automatically converted to placeholders during this process
-	 */
-	public String getContentAsRtf()
+	public NoteContentV2 getContentV2() throws BadLocationException
 	{
-		try
-		{
-			ByteArrayOutputStream baos = new ByteArrayOutputStream();
-			textPane.getEditorKit().write(baos, textPane.getDocument(), 0, textPane.getDocument().getLength());
-			return baos.toString(String.valueOf(StandardCharsets.UTF_8));
-		}
-		catch (Exception e)
-		{
-			log.warn("Failed to export RTF content, using plain text", e);
-			return textPane.getText();
-		}
+		return NoteSerializerV2.fromDocument(textPane.getStyledDocument());
 	}
 
 	/**

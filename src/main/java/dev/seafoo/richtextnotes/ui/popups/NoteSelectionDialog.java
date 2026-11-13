@@ -1,6 +1,7 @@
 package dev.seafoo.richtextnotes.ui.popups;
 
 import dev.seafoo.richtextnotes.models.NoteMetadata;
+import dev.seafoo.richtextnotes.ui.panels.NotePaneGroup;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -8,6 +9,7 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.image.BufferedImage;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -19,6 +21,8 @@ import java.util.stream.Collectors;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.Icon;
+import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
@@ -49,6 +53,9 @@ import net.runelite.client.ui.ColorScheme;
 @Slf4j
 public class NoteSelectionDialog extends JDialog
 {
+	// Same size as the cloud icon, so local and synced titles line up
+	private static final Icon NO_SYNC_ICON = new ImageIcon(new BufferedImage(
+		NotePaneGroup.SYNCED_ICON.getIconWidth(), NotePaneGroup.SYNCED_ICON.getIconHeight(), BufferedImage.TYPE_INT_ARGB));
 
 	private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm");
 
@@ -398,6 +405,14 @@ public class NoteSelectionDialog extends JDialog
 				}
 
 				setBorder(new EmptyBorder(2, 5, 2, 5));
+
+				// Cloud icon next to the title of synced notes
+				Icon icon = null;
+				if (table.convertColumnIndexToModel(column) == 0)
+				{
+					icon = filteredNotes.get(table.convertRowIndexToModel(row)).isSynced() ? NotePaneGroup.SYNCED_ICON : NO_SYNC_ICON;
+				}
+				setIcon(icon);
 
 				return this;
 			}

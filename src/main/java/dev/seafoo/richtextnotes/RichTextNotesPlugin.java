@@ -2,16 +2,20 @@ package dev.seafoo.richtextnotes;
 
 import com.google.gson.Gson;
 import com.google.inject.Provides;
+import dev.seafoo.richtextnotes.services.CloudSyncService;
 import dev.seafoo.richtextnotes.services.FileStorageService;
 import dev.seafoo.richtextnotes.services.ItemIconService;
 import dev.seafoo.richtextnotes.ui.panels.NotesPanel;
 import java.awt.image.BufferedImage;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigSync;
 import net.runelite.client.events.ProfileChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -46,6 +50,7 @@ public class RichTextNotesPlugin extends Plugin
 	private NotesPanel panel;
 	private NavigationButton navButton;
 	private FileStorageService storageService;
+	private CloudSyncService cloudSyncService;
 
 	@Provides
 	RichTextNotesConfig getConfig(ConfigManager configManager)
@@ -60,12 +65,14 @@ public class RichTextNotesPlugin extends Plugin
 		{
 			// Initialize storage service with configManager
 			storageService = new FileStorageService(configManager, gson);
+			cloudSyncService = new CloudSyncService(configManager, storageService);
+			cloudSyncService.pull();
 
 			log.debug("Rich Text Notes Initialized with profile: {}", storageService.getCurrentProfileName());
 
 			// Create and initialize the panel
 			panel = injector.getInstance(NotesPanel.class);
-			panel.init(config, storageService, itemIconService);
+			panel.init(config, storageService, itemIconService, cloudSyncService);
 
 			// Create navigation button
 			final BufferedImage icon = ImageUtil.loadImageResource(getClass(), "icons/rich_text_notes_icon.png");
@@ -105,7 +112,7 @@ public class RichTextNotesPlugin extends Plugin
 		{
 			if (panel != null)
 			{
-				panel.saveAllNotes();
+				panel.pushSyncedNotesToCloud();
 				panel.saveEditorLayout();
 			}
 
@@ -123,6 +130,36 @@ public class RichTextNotesPlugin extends Plugin
 		catch (Exception e)
 		{
 			log.error("Error during plugin shutdown", e);
+		}
+	}
+
+	/**
+	 * Fires before RuneLite uploads config: every few minutes and at shutdown.
+	 */
+	@Subscribe
+	public void onConfigSync(ConfigSync configSync)
+	{
+		if (panel == null)
+		{
+			return;
+		}
+
+		try
+		{
+			if (SwingUtilities.isEventDispatchThread())
+			{
+				panel.pushSyncedNotesToCloud();
+				return;
+			}
+
+			// Editors live on the Swing thread; time out so shutdown can't hang on us
+			FutureTask<Void> push = new FutureTask<>(panel::pushSyncedNotesToCloud, null);
+			SwingUtilities.invokeLater(push);
+			push.get(2, TimeUnit.SECONDS);
+		}
+		catch (Exception e)
+		{
+			log.warn("Failed to push synced notes before config sync", e);
 		}
 	}
 

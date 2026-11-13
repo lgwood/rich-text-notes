@@ -2,14 +2,19 @@ package dev.seafoo.richtextnotes.ui.panels;
 
 import dev.seafoo.richtextnotes.RichTextNotesConfig;
 import dev.seafoo.richtextnotes.models.EditorLayout;
+import dev.seafoo.richtextnotes.models.Note;
 import dev.seafoo.richtextnotes.models.NoteMetadata;
+import dev.seafoo.richtextnotes.services.CloudSyncService;
 import dev.seafoo.richtextnotes.services.FileStorageService;
 import dev.seafoo.richtextnotes.services.ItemIconService;
+import dev.seafoo.richtextnotes.ui.components.RichTextEditor;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.swing.BorderFactory;
 import javax.swing.JOptionPane;
@@ -18,6 +23,7 @@ import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
@@ -34,10 +40,15 @@ public class NotesPanel extends PluginPanel
 	private FileStorageService storageService;
 	private RichTextNotesConfig config;
 	private ItemIconService itemIconService;
+	@Getter
+	private CloudSyncService cloudSyncService;
 
 	// Split pane management
 	private JPanel mainContentPanel;
 	private final List<NotePaneGroup> paneGroups = new ArrayList<>();
+	// Notes open in any pane. Shared so a note open in two panes is the same Note and metadata.
+	@Getter
+	private final Map<String, Note> openNotes = new ConcurrentHashMap<>();
 	private final AtomicInteger paneGroupCounter = new AtomicInteger(0);
 
 	// UI Components
@@ -48,12 +59,14 @@ public class NotesPanel extends PluginPanel
 	private String activeNoteId;
 	private Timer layoutSaveTimer;
 
-	public void init(RichTextNotesConfig config, FileStorageService storageService, ItemIconService itemIconService)
+	public void init(RichTextNotesConfig config, FileStorageService storageService, ItemIconService itemIconService,
+		CloudSyncService cloudSyncService)
 	{
 
 		this.config = config;
 		this.storageService = storageService;
 		this.itemIconService = itemIconService;
+		this.cloudSyncService = cloudSyncService;
 
 		setupUI();
 		setupAutoSave();
@@ -170,6 +183,14 @@ public class NotesPanel extends PluginPanel
 
 		// Remove the pane group
 		paneGroups.remove(paneGroup);
+		paneGroup.close();
+		for (String noteId : paneGroup.getNoteEditors().keySet())
+		{
+			if (findOpenEditor(noteId) == null)
+			{
+				openNotes.remove(noteId);
+			}
+		}
 
 		// Update active pane if necessary
 		if (activePaneGroup == paneGroup)
@@ -289,6 +310,7 @@ public class NotesPanel extends PluginPanel
 
 			// Clear current layout (we already have one initial pane group)
 			paneGroups.clear();
+			openNotes.clear();
 			mainContentPanel.removeAll();
 			activePaneGroup = null;
 			activeNoteId = null;
@@ -387,6 +409,7 @@ public class NotesPanel extends PluginPanel
 			try
 			{
 				paneGroups.clear();
+				openNotes.clear();
 				mainContentPanel.removeAll();
 				activePaneGroup = null;
 				activeNoteId = null;
@@ -480,6 +503,52 @@ public class NotesPanel extends PluginPanel
 	}
 
 	// Public interface methods for plugin
+
+	RichTextEditor findOpenEditor(String noteId)
+	{
+		for (NotePaneGroup paneGroup : paneGroups)
+		{
+			RichTextEditor editor = paneGroup.getEditor(noteId);
+			if (editor != null)
+			{
+				return editor;
+			}
+		}
+		return null;
+	}
+
+	boolean isOpenInAnotherPane(String noteId, NotePaneGroup except)
+	{
+		return paneGroups.stream().anyMatch(paneGroup -> paneGroup != except && paneGroup.getEditor(noteId) != null);
+	}
+
+	void closeNoteInAllPanes(String noteId)
+	{
+		for (NotePaneGroup paneGroup : new ArrayList<>(paneGroups))
+		{
+			paneGroup.closeNoteTab(noteId);
+		}
+		openNotes.remove(noteId);
+	}
+
+	void refreshHeaders()
+	{
+		for (NotePaneGroup paneGroup : paneGroups)
+		{
+			paneGroup.updateTabHeader();
+		}
+	}
+
+	/**
+	 * Saves every open note and writes synced ones to the RuneLite config.
+	 */
+	public void pushSyncedNotesToCloud()
+	{
+		for (NotePaneGroup paneGroup : paneGroups)
+		{
+			paneGroup.pushAllToCloud();
+		}
+	}
 
 	public void saveAllNotes()
 	{
@@ -581,23 +650,21 @@ public class NotesPanel extends PluginPanel
 		{
 			log.debug("Switching to profile: {}", newProfile);
 
-			// Save current state before switching
-			try
+			// The notes folder has already switched: stop the old panes saving or uploading into the new profile
+			for (NotePaneGroup paneGroup : paneGroups)
 			{
-				saveAllNotes();
-				saveEditorLayout();
-				log.debug("Saved current profile state before switching");
-			}
-			catch (Exception e)
-			{
-				log.warn("Failed to save current state before profile switch", e);
+				paneGroup.close();
 			}
 
 			SwingUtilities.invokeLater(() -> {
 				try
 				{
+					// Bring the new profile's notes up to date with the cloud before opening them
+					cloudSyncService.pull();
+
 					// Clear all pane groups
 					paneGroups.clear();
+					openNotes.clear();
 					mainContentPanel.removeAll();
 					activePaneGroup = null;
 					activeNoteId = null;
@@ -639,6 +706,7 @@ public class NotesPanel extends PluginPanel
 			}
 
 			paneGroups.clear();
+			openNotes.clear();
 
 		}
 		catch (Exception e)

@@ -196,6 +196,12 @@ public class InlineItemAutoComplete
 
 	private void checkForTrigger()
 	{
+		// The document can be shared with another pane; only react to typing in this one
+		if (!textPane.isFocusOwner())
+		{
+			return;
+		}
+
 		try
 		{
 			int caretPos = textPane.getCaretPosition();

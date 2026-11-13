@@ -9,7 +9,6 @@ import java.awt.Font;
 import java.awt.event.ActionEvent;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.HashMap;
 import java.util.Map;
 import javax.swing.AbstractAction;
@@ -21,6 +20,7 @@ import javax.swing.text.AttributeSet;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.Document;
+import javax.swing.text.Element;
 import javax.swing.text.MutableAttributeSet;
 import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.Style;
@@ -80,81 +80,14 @@ public class NotesEnhancedEditorKit extends RTFEditorKit
 	}
 
 	/**
-	 * Override write to convert icons to placeholders before saving
+	 * Typed text copies the attributes of the character before it. Swing drops the icon image but
+	 * not our item data, so without this, text typed right after an icon would be saved as icons.
 	 */
 	@Override
-	public void write(OutputStream out, Document doc, int pos, int len)
-		throws IOException, BadLocationException
+	protected void createInputAttributes(Element element, MutableAttributeSet set)
 	{
-
-		if (doc instanceof NotesEnhancedDocument)
-		{
-			// Create a copy of the document for saving
-			NotesEnhancedDocument copyDoc = createDocumentCopy((NotesEnhancedDocument) doc);
-
-			try
-			{
-				// Convert icons to placeholders in the copy only
-				copyDoc.convertIconsToPlaceholders();
-
-				// Write the copy to RTF
-				super.write(out, copyDoc, 0, copyDoc.getLength());
-
-			}
-			catch (Exception e)
-			{
-				log.error("Failed to save with icon conversion, trying original document", e);
-				// Fallback to original document if copy fails
-				super.write(out, doc, pos, len);
-			}
-		}
-		else
-		{
-			// Fallback for non-enhanced documents
-			super.write(out, doc, pos, len);
-		}
-	}
-
-	/**
-	 * Create a copy of the document with all content and formatting
-	 */
-	private NotesEnhancedDocument createDocumentCopy(NotesEnhancedDocument originalDoc) throws BadLocationException
-	{
-		NotesEnhancedDocument copyDoc = new NotesEnhancedDocument();
-		try
-		{
-			// Copy all content from original to copy
-			copyDocumentContent(originalDoc, copyDoc);
-			return copyDoc;
-
-		}
-		catch (Exception e)
-		{
-			log.error("Failed to create document copy", e);
-			throw new BadLocationException("Could not copy document", 0);
-		}
-	}
-
-	/**
-	 * Copy all content and formatting from source to destination document
-	 */
-	private void copyDocumentContent(StyledDocument sourceDoc, StyledDocument destDoc) throws BadLocationException
-	{
-		int sourceLength = sourceDoc.getLength();
-		if (sourceLength == 0)
-		{
-			return;
-		}
-
-		// Copy character by character with exact attributes to preserve structure
-		for (int i = 0; i < sourceLength; i++)
-		{
-			String ch = sourceDoc.getText(i, 1);
-			AttributeSet attrs = sourceDoc.getCharacterElement(i).getAttributes();
-
-			// Insert into destination at the same position
-			destDoc.insertString(i, ch, attrs);
-		}
+		super.createInputAttributes(element, set);
+		set.removeAttribute(NotesEnhancedDocument.ICON_ATTRIBUTE);
 	}
 
 	/**
