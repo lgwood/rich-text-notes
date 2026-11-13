@@ -1,10 +1,14 @@
 package dev.seafoo.richtextnotes.ui.panels;
 
 import dev.seafoo.richtextnotes.RichTextNotesConfig;
+import dev.seafoo.richtextnotes.RichTextNotesPlugin;
 import dev.seafoo.richtextnotes.models.Note;
+import dev.seafoo.richtextnotes.models.NoteContentV2;
 import dev.seafoo.richtextnotes.models.NoteMetadata;
+import dev.seafoo.richtextnotes.services.CloudSyncService;
 import dev.seafoo.richtextnotes.services.FileStorageService;
 import dev.seafoo.richtextnotes.services.ItemIconService;
+import dev.seafoo.richtextnotes.services.NoteSerializerV2;
 import dev.seafoo.richtextnotes.ui.components.RichTextEditor;
 import dev.seafoo.richtextnotes.ui.popups.NoteSelectionDialog;
 import dev.seafoo.richtextnotes.ui.popups.TagEditDialog;
@@ -15,6 +19,9 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Graphics;
+import java.awt.Insets;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.time.LocalDateTime;
@@ -23,6 +30,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.swing.BorderFactory;
+import javax.swing.Icon;
+import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -31,12 +40,20 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JTabbedPane;
+import javax.swing.JTextPane;
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 import javax.swing.border.EmptyBorder;
+import javax.swing.text.AbstractDocument;
+import javax.swing.text.AttributeSet;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.DocumentFilter;
+import javax.swing.text.StyledDocument;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.ui.ColorScheme;
+import net.runelite.client.util.ImageUtil;
 
 /**
  * A single pane group that contains a tabbed interface for notes.
@@ -47,6 +64,12 @@ import net.runelite.client.ui.ColorScheme;
 @Data
 public class NotePaneGroup extends JPanel
 {
+	public static final ImageIcon SYNCED_ICON =
+		new ImageIcon(ImageUtil.loadImageResource(RichTextNotesPlugin.class, "icons/cloud_synced.png"));
+	private static final ImageIcon LOCAL_ICON =
+		new ImageIcon(ImageUtil.loadImageResource(RichTextNotesPlugin.class, "icons/cloud_local.png"));
+	// Typing stops this far under the size limit; the size estimate ignores formatting that typed text adds
+	private static final int TYPING_SIZE_MARGIN = 256;
 
 	private final NotesPanel parentPanel;
 	private final FileStorageService storageService;
@@ -57,10 +80,13 @@ public class NotePaneGroup extends JPanel
 	private JTabbedPane tabbedPane;
 
 	// Note management for this pane group
-	private final Map<String, Note> loadedNotes = new ConcurrentHashMap<>();
+	// Shared with every pane (NotesPanel.openNotes), so a note open in two panes is one Note
+	private final Map<String, Note> loadedNotes;
 	private final Map<String, NoteEditor> noteEditors = new ConcurrentHashMap<>();
 	private String currentNoteId;
 	private final String paneGroupId;
+	// Set when the profile switches away; this pane's notes must no longer be saved or uploaded
+	private volatile boolean closed;
 
 	public NotePaneGroup(NotesPanel parentPanel, FileStorageService storageService,
 						 RichTextNotesConfig config, String paneGroupId, ItemIconService itemIconService)
@@ -70,6 +96,7 @@ public class NotePaneGroup extends JPanel
 		this.config = config;
 		this.paneGroupId = paneGroupId;
 		this.itemIconService = itemIconService;
+		this.loadedNotes = parentPanel.getOpenNotes();
 		setupUI();
 	}
 
@@ -155,24 +182,25 @@ public class NotePaneGroup extends JPanel
 		JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
 		actionsPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		JButton prevButton = new JButton("<");
-		prevButton.setPreferredSize(new Dimension(30, 24));
+		JButton syncButton = createHeaderButton(null, LOCAL_ICON);
+		syncButton.addActionListener(e -> {
+			Note note = currentNoteId != null ? loadedNotes.get(currentNoteId) : null;
+			if (note != null && note.getMetadata() != null)
+			{
+				setSynced(currentNoteId, !note.getMetadata().isSynced());
+			}
+		});
+		actionsPanel.add(syncButton);
+
+		JButton prevButton = createHeaderButton("<", null);
 		prevButton.addActionListener(e -> navigateTab(-1));
 		actionsPanel.add(prevButton);
 
-		JButton nextButton = new JButton(">");
-		nextButton.setPreferredSize(new Dimension(30, 24));
+		JButton nextButton = createHeaderButton(">", null);
 		nextButton.addActionListener(e -> navigateTab(1));
 		actionsPanel.add(nextButton);
 
-		JButton newButton = new JButton("+");
-		newButton.setPreferredSize(new Dimension(30, 24));
-		newButton.setToolTipText("New note");
-		newButton.addActionListener(e -> createNewNote());
-		actionsPanel.add(newButton);
-
-		JButton menuButton = new JButton("...");
-		menuButton.setPreferredSize(new Dimension(30, 24));
+		JButton menuButton = createHeaderButton("...", null);
 		menuButton.setToolTipText("Menu");
 		menuButton.addActionListener(e -> showPaneMenu(menuButton));
 		actionsPanel.add(menuButton);
@@ -183,8 +211,17 @@ public class NotePaneGroup extends JPanel
 		header.putClientProperty("currentNoteLabel", currentNoteLabel);
 		header.putClientProperty("prevButton", prevButton);
 		header.putClientProperty("nextButton", nextButton);
+		header.putClientProperty("syncButton", syncButton);
 
 		return header;
+	}
+
+	private static JButton createHeaderButton(String text, Icon icon)
+	{
+		JButton button = new JButton(text, icon);
+		button.setPreferredSize(new Dimension(22, 24));
+		button.setMargin(new Insets(0, 0, 0, 0));
+		return button;
 	}
 
 	private void navigateTab(int direction)
@@ -200,12 +237,16 @@ public class NotePaneGroup extends JPanel
 
 		if (newIndex >= 0 && newIndex < tabCount)
 		{
+			if (currentNoteId != null)
+			{
+				pushToCloud(currentNoteId);
+			}
 			tabbedPane.setSelectedIndex(newIndex);
 			updateTabHeader();
 		}
 	}
 
-	private void updateTabHeader()
+	void updateTabHeader()
 	{
 		Component headerComponent = getComponent(0); // North component
 		if (!(headerComponent instanceof JPanel))
@@ -217,6 +258,7 @@ public class NotePaneGroup extends JPanel
 		JLabel currentNoteLabel = (JLabel) header.getClientProperty("currentNoteLabel");
 		JButton prevButton = (JButton) header.getClientProperty("prevButton");
 		JButton nextButton = (JButton) header.getClientProperty("nextButton");
+		JButton syncButton = (JButton) header.getClientProperty("syncButton");
 
 		if (currentNoteLabel == null)
 		{
@@ -227,9 +269,9 @@ public class NotePaneGroup extends JPanel
 		int selectedIndex = tabbedPane.getSelectedIndex();
 
 		// Update current note display
+		Note note = selectedIndex >= 0 && currentNoteId != null ? loadedNotes.get(currentNoteId) : null;
 		if (selectedIndex >= 0 && currentNoteId != null)
 		{
-			Note note = loadedNotes.get(currentNoteId);
 			if (note != null)
 			{
 				String title = note.getDisplayTitle();
@@ -253,6 +295,11 @@ public class NotePaneGroup extends JPanel
 		{
 			currentNoteLabel.setText("No note selected");
 			currentNoteLabel.setToolTipText(null);
+		}
+
+		if (syncButton != null)
+		{
+			updateSyncButton(syncButton, note);
 		}
 
 		// Update navigation button states
@@ -310,6 +357,10 @@ public class NotePaneGroup extends JPanel
 	private void showPaneMenu(JButton menuButton)
 	{
 		JPopupMenu menu = new JPopupMenu();
+
+		JMenuItem newNote = new JMenuItem("New Note");
+		newNote.addActionListener(e -> createNewNote());
+		menu.add(newNote);
 
 		JMenuItem openExisting = new JMenuItem("Open Existing Note");
 		openExisting.addActionListener(e -> showOpenNoteDialog());
@@ -468,7 +519,8 @@ public class NotePaneGroup extends JPanel
 			try
 			{
 				storageService.saveNoteMetadata(noteId, metadata);
-				updateTabHeader(); // Update display to show tag count
+				pushToCloud(noteId);
+				parentPanel.refreshHeaders(); // Update display to show tag count
 				log.debug("Updated tags for note {}: {}", noteId, newTags);
 			}
 			catch (Exception e)
@@ -483,8 +535,7 @@ public class NotePaneGroup extends JPanel
 		try
 		{
 			// Create new note with default content
-			String defaultContent = "";
-			String noteId = storageService.saveNote(null, defaultContent);
+			String noteId = storageService.saveNote(null, new NoteContentV2());
 
 			// Create metadata
 			NoteMetadata metadata = new NoteMetadata(
@@ -530,15 +581,34 @@ public class NotePaneGroup extends JPanel
 			Note note = loadedNotes.get(noteId);
 			if (note == null)
 			{
-				String content = storageService.loadNote(noteId);
+				NoteContentV2 contentV2 = storageService.loadContentV2(noteId);
+				String rtfV1 = contentV2 == null ? storageService.loadRtfV1(noteId) : null;
 				NoteMetadata metadata = storageService.loadNoteMetadata(noteId);
-				note = new Note(noteId, content, metadata);
+				note = new Note(noteId, contentV2, rtfV1, metadata);
 				loadedNotes.put(noteId, note);
 			}
 
 			// Create editor for this note
-			NoteEditor editor = new NoteEditor(note, parentPanel::scheduleAutoSave, itemIconService, config);
+			NoteEditor editor;
+			RichTextEditor openElsewhere = parentPanel.findOpenEditor(noteId);
+			if (openElsewhere != null)
+			{
+				editor = new NoteEditor(openElsewhere, config);
+			}
+			else
+			{
+				editor = new NoteEditor(note, parentPanel::scheduleAutoSave, itemIconService, config);
+				limitSyncedNoteSize(noteId, editor.getTextPane());
+			}
 			noteEditors.put(noteId, editor);
+			editor.getTextPane().addFocusListener(new FocusAdapter()
+			{
+				@Override
+				public void focusLost(FocusEvent e)
+				{
+					pushToCloud(noteId);
+				}
+			});
 
 			// Add tab to tabbedPane (hidden, just for content management)
 			int tabIndex = tabbedPane.getTabCount();
@@ -573,7 +643,7 @@ public class NotePaneGroup extends JPanel
 		if (noteId != null)
 		{
 			// Save note before closing
-			saveNote(noteId);
+			pushToCloud(noteId);
 			closeTabInternal(tabIndex);
 		}
 	}
@@ -603,7 +673,10 @@ public class NotePaneGroup extends JPanel
 
 		// Clean up editor and memory
 		noteEditors.remove(noteId);
-		loadedNotes.remove(noteId);
+		if (!parentPanel.isOpenInAnotherPane(noteId, this))
+		{
+			loadedNotes.remove(noteId);
+		}
 
 		// Update current note
 		if (noteId.equals(currentNoteId))
@@ -637,9 +710,10 @@ public class NotePaneGroup extends JPanel
 				note.getMetadata().setTitle(newTitle.trim());
 				note.getMetadata().updateModified();
 				storageService.saveNoteMetadata(noteId, note.getMetadata());
+				pushToCloud(noteId);
 
 				// Update tab display
-				updateTabHeader();
+				parentPanel.refreshHeaders();
 
 			}
 			catch (Exception e)
@@ -664,18 +738,11 @@ public class NotePaneGroup extends JPanel
 			try
 			{
 				// Remove from storage
+				parentPanel.getCloudSyncService().remove(noteId);
 				storageService.deleteNote(noteId);
 
-				// Find and remove tab
-				for (int i = 0; i < tabbedPane.getTabCount(); i++)
-				{
-					String tabNoteId = (String) tabbedPane.getClientProperty("noteId_" + i);
-					if (noteId.equals(tabNoteId))
-					{
-						closeTabInternal(i);
-						break;
-					}
-				}
+				// Close it in every pane, so no other pane saves it back
+				parentPanel.closeNoteInAllPanes(noteId);
 
 				log.debug("Deleted note: {} from pane group: {}", noteId, paneGroupId);
 
@@ -687,10 +754,181 @@ public class NotePaneGroup extends JPanel
 		}
 	}
 
+	private void updateSyncButton(JButton button, Note note)
+	{
+		if (note == null || note.getMetadata() == null)
+		{
+			button.setEnabled(false);
+			button.setIcon(LOCAL_ICON);
+			button.setToolTipText(null);
+			return;
+		}
+
+		boolean synced = note.getMetadata().isSynced();
+		CloudSyncService cloud = parentPanel.getCloudSyncService();
+		int noteCount = cloud.getSyncedNoteCount();
+		// Unknown (-1) for notes not yet saved as v2
+		int size = note.getContentV2() != null ? cloud.getCloudSize(note.getMetadata(), note.getContentV2()) : -1;
+
+		boolean tooManyNotes = !synced && noteCount >= CloudSyncService.MAX_SYNCED_NOTES;
+		boolean tooLarge = size > CloudSyncService.MAX_NOTE_SIZE;
+		String status;
+		if (synced)
+		{
+			// Over the limit while synced: uploads pause until it shrinks
+			status = tooLarge ? "Too large to sync" : "Synced to cloud";
+		}
+		else if (tooManyNotes)
+		{
+			status = "Note limit reached";
+		}
+		else if (tooLarge)
+		{
+			status = "Too large to sync";
+		}
+		else
+		{
+			status = "Local - click to sync";
+		}
+
+		StringBuilder tooltip = new StringBuilder("<html>").append(status)
+			.append("<br>").append(noteCount).append("/").append(CloudSyncService.MAX_SYNCED_NOTES).append(" notes");
+		if (size >= 0)
+		{
+			tooltip.append(String.format(" (%.1f/%d KB)", size / 1024.0, CloudSyncService.MAX_NOTE_SIZE / 1024));
+		}
+		tooltip.append("</html>");
+
+		// Turning sync off always works; turning it on needs room
+		button.setEnabled(synced || (!tooManyNotes && !tooLarge));
+		button.setIcon(synced ? SYNCED_ICON : LOCAL_ICON);
+		button.setToolTipText(tooltip.toString());
+	}
+
+	/**
+	 * Stops typing or pasting once a synced note reaches the cloud size limit. Deleting still works.
+	 * Installed after the note is loaded, so loading is never blocked.
+	 */
+	private void limitSyncedNoteSize(String noteId, JTextPane textPane)
+	{
+		((AbstractDocument) textPane.getDocument()).setDocumentFilter(new DocumentFilter()
+		{
+			@Override
+			public void insertString(FilterBypass fb, int offset, String text, AttributeSet attrs) throws BadLocationException
+			{
+				replace(fb, offset, 0, text, attrs);
+			}
+
+			@Override
+			public void replace(FilterBypass fb, int offset, int length, String text, AttributeSet attrs) throws BadLocationException
+			{
+				if (text == null || text.isEmpty() || fitsInCloud(noteId, (StyledDocument) fb.getDocument(), offset, length, text))
+				{
+					super.replace(fb, offset, length, text, attrs);
+				}
+				else
+				{
+					UIManager.getLookAndFeel().provideErrorFeedback(textPane);
+				}
+			}
+		});
+	}
+
+	private boolean fitsInCloud(String noteId, StyledDocument doc, int offset, int removedLength, String inserted)
+		throws BadLocationException
+	{
+		Note note = loadedNotes.get(noteId);
+		if (note == null || note.getMetadata() == null || !note.getMetadata().isSynced())
+		{
+			return true;
+		}
+
+		// Estimate only: formatting offsets after the edit shift, which barely changes the size
+		NoteContentV2 content = NoteSerializerV2.fromDocument(doc);
+		String text = content.getText();
+		content.setText(text.substring(0, offset) + inserted + text.substring(offset + removedLength));
+		return parentPanel.getCloudSyncService().getCloudSize(note.getMetadata(), content) <= CloudSyncService.MAX_NOTE_SIZE - TYPING_SIZE_MARGIN;
+	}
+
+	private void setSynced(String noteId, boolean synced)
+	{
+		Note note = loadedNotes.get(noteId);
+		if (note == null || note.getMetadata() == null)
+		{
+			return;
+		}
+
+		note.getMetadata().setSynced(synced);
+		if (synced)
+		{
+			// Over a limit it never reached the cloud, so it goes back to being local
+			note.setModified(true);
+			if (!pushToCloud(noteId))
+			{
+				setSynced(noteId, false);
+				return;
+			}
+			parentPanel.refreshHeaders(); // the synced note count changed
+			return;
+		}
+
+		parentPanel.getCloudSyncService().remove(noteId);
+		try
+		{
+			storageService.saveNoteMetadata(noteId, note.getMetadata());
+		}
+		catch (Exception e)
+		{
+			log.error("Failed to save sync setting for note: {}", noteId, e);
+		}
+		parentPanel.refreshHeaders();
+	}
+
+	/**
+	 * Saves the note, then writes it to config if it's synced. Returns false if not synced or over a limit.
+	 * Called on focus loss, tab switch/close and ConfigSync rather than every autosave, since each
+	 * config write notifies every plugin.
+	 */
+	private boolean pushToCloud(String noteId)
+	{
+		saveNote(noteId);
+		Note note = loadedNotes.get(noteId);
+		if (closed || note == null || note.getContentV2() == null || note.getMetadata() == null || !note.getMetadata().isSynced())
+		{
+			return false;
+		}
+
+		try
+		{
+			parentPanel.getCloudSyncService().upload(note.getMetadata(), note.getContentV2());
+			return true;
+		}
+		catch (CloudSyncService.SyncLimitException e)
+		{
+			// Over a limit: stay synced and keep the last cloud version; the sync button's tooltip says why
+			log.debug("Not uploading note {}: {}", noteId, e.getMessage());
+			return false;
+		}
+	}
+
 	// Public methods for parent panel management
+
+	/**
+	 * Stops all saving and uploading from this pane. The notes folder and config may already
+	 * belong to another profile by the time its editors lose focus.
+	 */
+	public void close()
+	{
+		closed = true;
+	}
 
 	public void saveNote(String noteId)
 	{
+		if (closed)
+		{
+			return;
+		}
+
 		try
 		{
 			Note note = loadedNotes.get(noteId);
@@ -703,16 +941,19 @@ public class NotePaneGroup extends JPanel
 			NoteEditor editor = noteEditors.get(noteId);
 			if (editor != null)
 			{
-				String currentContent = editor.getContent();
-				note.setRtfContent(currentContent);
+				note.setContentV2(editor.getContentV2());
+			}
+			if (note.getContentV2() == null)
+			{
+				return; // v1 note with no editor open, nothing new to write
 			}
 
 			// Save to storage
-			storageService.saveNote(noteId, note.getRtfContent());
+			storageService.saveNote(noteId, note.getContentV2());
 			storageService.saveNoteMetadata(noteId, note.getMetadata());
 
 			note.markSaved();
-			updateTabHeader(); // Update to remove the * indicator
+			parentPanel.refreshHeaders(); // Update to remove the * indicator
 
 		}
 		catch (Exception e)
@@ -722,9 +963,38 @@ public class NotePaneGroup extends JPanel
 		}
 	}
 
+	public RichTextEditor getEditor(String noteId)
+	{
+		NoteEditor editor = noteEditors.get(noteId);
+		return editor != null ? editor.richTextEditor : null;
+	}
+
+	/**
+	 * Closes the note's tab in this pane without saving it.
+	 */
+	void closeNoteTab(String noteId)
+	{
+		for (int i = 0; i < tabbedPane.getTabCount(); i++)
+		{
+			if (noteId.equals(tabbedPane.getClientProperty("noteId_" + i)))
+			{
+				closeTabInternal(i);
+				return;
+			}
+		}
+	}
+
+	public void pushAllToCloud()
+	{
+		for (String noteId : noteEditors.keySet())
+		{
+			pushToCloud(noteId);
+		}
+	}
+
 	public void saveAllNotes()
 	{
-		for (String noteId : loadedNotes.keySet())
+		for (String noteId : noteEditors.keySet())
 		{
 			if (loadedNotes.get(noteId).isModified())
 			{
@@ -735,7 +1005,7 @@ public class NotePaneGroup extends JPanel
 
 	public boolean hasModifiedNotes()
 	{
-		return loadedNotes.values().stream().anyMatch(Note::isModified);
+		return noteEditors.keySet().stream().map(loadedNotes::get).anyMatch(note -> note != null && note.isModified());
 	}
 
 	public int getTabCount()
@@ -774,6 +1044,15 @@ public class NotePaneGroup extends JPanel
 		private final Runnable saveCallback;
 		private final RichTextNotesConfig config;
 
+		// A second view of a note already open in another pane
+		public NoteEditor(RichTextEditor openElsewhere, RichTextNotesConfig config)
+		{
+			this.note = openElsewhere.getNote();
+			this.saveCallback = openElsewhere.getChangeCallback();
+			this.config = config;
+			this.richTextEditor = new RichTextEditor(openElsewhere, config);
+		}
+
 		public NoteEditor(Note note, Runnable saveCallback, ItemIconService itemIconService, RichTextNotesConfig config)
 		{
 			this.note = note;
@@ -788,9 +1067,14 @@ public class NotePaneGroup extends JPanel
 			return richTextEditor;
 		}
 
-		public String getContent()
+		public NoteContentV2 getContentV2() throws BadLocationException
 		{
-			return richTextEditor.getContentAsRtf();
+			return richTextEditor.getContentV2();
+		}
+
+		public JTextPane getTextPane()
+		{
+			return richTextEditor.getTextPane();
 		}
 
 		public void requestFocus()

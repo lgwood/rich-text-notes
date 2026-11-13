@@ -10,6 +10,7 @@ import com.google.gson.JsonPrimitive;
 import com.google.gson.JsonSerializationContext;
 import com.google.gson.JsonSerializer;
 import dev.seafoo.richtextnotes.models.EditorLayout;
+import dev.seafoo.richtextnotes.models.NoteContentV2;
 import dev.seafoo.richtextnotes.models.NoteMetadata;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -25,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.RuneLite;
 import net.runelite.client.config.ConfigManager;
@@ -36,6 +38,10 @@ public class FileStorageService
 	private static final String NOTES_ENHANCED_DIR = "rich-text-notes";
 	private static final String NOTES_SUBDIR = "notes";
 	private static final String BACKUP_SUBDIR = "backups";
+
+	private static final String V2_EXT = ".note";
+	private static final String V1_EXT = ".rtf";
+	private static final String METADATA_EXT = ".json";
 
 	private static final String DEFAULT_PROFILE = "default_profile";
 
@@ -49,11 +55,17 @@ public class FileStorageService
 
 	public FileStorageService(ConfigManager configManager, Gson gson)
 	{
+		this(configManager, gson, RuneLite.RUNELITE_DIR.toPath().resolve(NOTES_ENHANCED_DIR));
+	}
+
+	// Separate base directory so tests don't touch the real notes folder
+	FileStorageService(ConfigManager configManager, Gson gson, Path baseDirectory)
+	{
 		this.configManager = configManager;
 		this.gson = gson.newBuilder().setPrettyPrinting()
 			.registerTypeAdapter(LocalDateTime.class, new LocalDateTimeTypeAdapter())
 			.create();
-		this.baseDirectory = RuneLite.RUNELITE_DIR.toPath().resolve(NOTES_ENHANCED_DIR);
+		this.baseDirectory = baseDirectory;
 
 		initializeDirectories();
 		updateCurrentProfile();
@@ -141,6 +153,15 @@ public class FileStorageService
 			log.error("Failed to create profile directories for: {}", currentProfileDirectory, e);
 			throw new RuntimeException("Could not create profile directories", e);
 		}
+
+		try
+		{
+			backupBeforeV2();
+		}
+		catch (IOException e)
+		{
+			log.warn("Failed to back up notes before format change", e);
+		}
 	}
 
 	private String sanitizeProfileName(String profileName)
@@ -168,36 +189,62 @@ public class FileStorageService
 	 * Note file operations
 	 */
 
-	public String saveNote(String noteId, String rtfContent) throws IOException
+	/**
+	 * Writes the note as v2. v1 (.rtf) files are only ever read, never written.
+	 */
+	public String saveNote(String noteId, NoteContentV2 contentV2) throws IOException
 	{
 		if (noteId == null)
 		{
 			noteId = generateNoteId();
 		}
 
-		Path noteFile = getProfileDirectory().resolve(NOTES_SUBDIR).resolve(noteId + ".rtf");
-
-		// Create backup if file exists
-		if (Files.exists(noteFile))
-		{
-			createBackup(noteId);
-		}
-
-		Files.write(noteFile, rtfContent.getBytes(StandardCharsets.UTF_8));
+		writeAtomically(noteFile(noteId, V2_EXT), gson.toJson(contentV2));
 		log.debug("Saved note: {} for profile: {}", noteId, getCurrentProfileName());
 		return noteId;
 	}
 
-	public String loadNote(String noteId) throws IOException
+	/**
+	 * Returns null if there's no readable .note (a v1 note, or a corrupt file), so callers fall back to the .rtf.
+	 */
+	public NoteContentV2 loadContentV2(String noteId) throws IOException
 	{
-		Path noteFile = getProfileDirectory().resolve(NOTES_SUBDIR).resolve(noteId + ".rtf");
+		Path file = noteFile(noteId, V2_EXT);
+		if (!Files.exists(file))
+		{
+			return null;
+		}
+		try
+		{
+			return gson.fromJson(new String(Files.readAllBytes(file), StandardCharsets.UTF_8), NoteContentV2.class);
+		}
+		catch (JsonParseException e)
+		{
+			log.warn("Could not read note: {}", file, e);
+			return null;
+		}
+	}
 
-		if (!Files.exists(noteFile))
+	/**
+	 * Writes to a temporary file first, so a crash mid-write can't leave a half-written note.
+	 */
+	private static void writeAtomically(Path file, String content) throws IOException
+	{
+		Path temp = file.resolveSibling(file.getFileName() + ".tmp");
+		Files.write(temp, content.getBytes(StandardCharsets.UTF_8));
+		Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+	}
+
+	public String loadRtfV1(String noteId) throws IOException
+	{
+		Path file = noteFile(noteId, V1_EXT);
+
+		if (!Files.exists(file))
 		{
 			throw new FileNotFoundException("Note not found: " + noteId + " in profile: " + getCurrentProfileName());
 		}
 
-		return new String(Files.readAllBytes(noteFile), StandardCharsets.UTF_8);
+		return new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
 	}
 
 	public void deleteNote(String noteId) throws IOException
@@ -205,11 +252,9 @@ public class FileStorageService
 		// Create backup before deletion
 		createBackup(noteId);
 
-		Path noteFile = getProfileDirectory().resolve(NOTES_SUBDIR).resolve(noteId + ".rtf");
-		Path metadataFile = getProfileDirectory().resolve(NOTES_SUBDIR).resolve(noteId + ".json");
-
-		Files.deleteIfExists(noteFile);
-		Files.deleteIfExists(metadataFile);
+		Files.deleteIfExists(noteFile(noteId, V2_EXT));
+		Files.deleteIfExists(noteFile(noteId, V1_EXT));
+		Files.deleteIfExists(noteFile(noteId, METADATA_EXT));
 		log.debug("Deleted note: {} from profile: {}", noteId, getCurrentProfileName());
 	}
 
@@ -219,14 +264,12 @@ public class FileStorageService
 
 	public void saveNoteMetadata(String noteId, NoteMetadata metadata) throws IOException
 	{
-		Path metadataFile = getProfileDirectory().resolve(NOTES_SUBDIR).resolve(noteId + ".json");
-		String json = gson.toJson(metadata);
-		Files.write(metadataFile, json.getBytes(StandardCharsets.UTF_8));
+		writeAtomically(noteFile(noteId, METADATA_EXT), gson.toJson(metadata));
 	}
 
 	public NoteMetadata loadNoteMetadata(String noteId) throws IOException
 	{
-		Path metadataFile = getProfileDirectory().resolve(NOTES_SUBDIR).resolve(noteId + ".json");
+		Path metadataFile = noteFile(noteId, METADATA_EXT);
 
 		if (!Files.exists(metadataFile))
 		{
@@ -276,11 +319,10 @@ public class FileStorageService
 		}
 
 		return Files.list(notesDir)
-			.filter(path -> path.toString().endsWith(".rtf"))
-			.map(path -> {
-				String filename = path.getFileName().toString();
-				return filename.substring(0, filename.length() - 4); // Remove .rtf extension
-			})
+			.map(path -> path.getFileName().toString())
+			.filter(name -> name.endsWith(V2_EXT) || name.endsWith(V1_EXT))
+			.map(name -> name.substring(0, name.lastIndexOf('.')))
+			.distinct()
 			.collect(Collectors.toList());
 	}
 
@@ -310,12 +352,13 @@ public class FileStorageService
 	 * Backup operations
 	 */
 
-	private void createBackup(String noteId) throws IOException
+	/**
+	 * Copies a note's files to a timestamped backup folder. Used before deleting a note
+	 * or overwriting it with a newer copy from the cloud.
+	 */
+	public void createBackup(String noteId) throws IOException
 	{
-		Path noteFile = getProfileDirectory().resolve(NOTES_SUBDIR).resolve(noteId + ".rtf");
-		Path metadataFile = getProfileDirectory().resolve(NOTES_SUBDIR).resolve(noteId + ".json");
-
-		if (!Files.exists(noteFile))
+		if (!noteExists(noteId))
 		{
 			return; // Nothing to back up
 		}
@@ -324,33 +367,41 @@ public class FileStorageService
 		Path backupDir = getProfileDirectory().resolve(BACKUP_SUBDIR).resolve(timestamp);
 		Files.createDirectories(backupDir);
 
-		Files.copy(noteFile, backupDir.resolve(noteId + ".rtf"));
-		if (Files.exists(metadataFile))
+		for (String ext : new String[]{V2_EXT, V1_EXT, METADATA_EXT})
 		{
-			Files.copy(metadataFile, backupDir.resolve(noteId + ".json"));
+			Path file = noteFile(noteId, ext);
+			if (Files.exists(file))
+			{
+				Files.copy(file, backupDir.resolve(noteId + ext), StandardCopyOption.REPLACE_EXISTING);
+			}
 		}
 	}
 
-	public void createFullBackup() throws IOException
+	/**
+	 * One-off copy of the notes folder the first time v2 runs,
+	 * in case converting v1 notes to v2 goes wrong.
+	 */
+	private void backupBeforeV2() throws IOException
 	{
-		String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-		Path backupDir = getProfileDirectory().resolve(BACKUP_SUBDIR).resolve("full_" + timestamp);
-		Files.createDirectories(backupDir);
-
-		// Copy all notes and metadata
-		copyDirectoryRecursively(getProfileDirectory().resolve(NOTES_SUBDIR),
-			backupDir.resolve(NOTES_SUBDIR));
-		copyDirectoryRecursively(getProfileDirectory().resolve(NOTES_SUBDIR),
-			backupDir.resolve(NOTES_SUBDIR));
-
-		// Copy layout
-		Path layoutFile = getProfileDirectory().resolve("layout.json");
-		if (Files.exists(layoutFile))
+		Path notesDir = getNotesDirectory();
+		Path target = getProfileDirectory().resolve(BACKUP_SUBDIR).resolve("before-v2");
+		if (Files.exists(target))
 		{
-			Files.copy(layoutFile, backupDir.resolve("layout.json"));
+			return;
 		}
 
-		log.debug("Created full backup for profile {}: {}", getCurrentProfileName(), backupDir);
+		List<String> files;
+		try (Stream<Path> stream = Files.list(notesDir))
+		{
+			files = stream.map(path -> path.getFileName().toString()).collect(Collectors.toList());
+		}
+		boolean hasV1Notes = files.stream().anyMatch(name -> name.endsWith(V1_EXT));
+		boolean hasV2Notes = files.stream().anyMatch(name -> name.endsWith(V2_EXT));
+		if (hasV1Notes && !hasV2Notes)
+		{
+			copyDirectoryRecursively(notesDir, target);
+			log.debug("Backed up notes before format change to: {}", target);
+		}
 	}
 
 	private void copyDirectoryRecursively(Path source, Path target) throws IOException
@@ -389,8 +440,17 @@ public class FileStorageService
 
 	public boolean noteExists(String noteId)
 	{
-		Path noteFile = getProfileDirectory().resolve(NOTES_SUBDIR).resolve(noteId + ".rtf");
-		return Files.exists(noteFile);
+		return Files.exists(noteFile(noteId, V2_EXT)) || Files.exists(noteFile(noteId, V1_EXT));
+	}
+
+	private Path noteFile(String noteId, String ext)
+	{
+		return getNotesDirectory().resolve(noteId + ext);
+	}
+
+	public Gson getGson()
+	{
+		return gson;
 	}
 
 	public Path getNotesDirectory()

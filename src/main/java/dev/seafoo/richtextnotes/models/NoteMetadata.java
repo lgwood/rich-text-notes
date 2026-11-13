@@ -38,6 +38,17 @@ public class NoteMetadata
 	@SerializedName("color")
 	private String color; // For color-coding notes
 
+	@SerializedName("synced")
+	private boolean synced;
+
+	// Last change in Unix ms (0 for older notes). Sync uses this, not lastModified, so time zones don't matter.
+	@SerializedName("modified_at")
+	private long modifiedAt;
+
+	// modifiedAt of the cloud version this computer last synced (0 = never), for spotting conflicts
+	@SerializedName("synced_version")
+	private long syncedVersion;
+
 	// Constructor for basic metadata
 	public NoteMetadata(String noteId, String title, LocalDateTime createdDate, List<String> tags)
 	{
@@ -79,5 +90,6 @@ public class NoteMetadata
 	public void updateModified()
 	{
 		this.lastModified = LocalDateTime.now();
+		this.modifiedAt = System.currentTimeMillis();
 	}
 }
