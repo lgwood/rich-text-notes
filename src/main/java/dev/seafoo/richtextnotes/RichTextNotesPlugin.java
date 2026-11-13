@@ -26,6 +26,9 @@ import net.runelite.client.util.ImageUtil;
 @Slf4j
 @PluginDescriptor(
 	name = "Rich Text Notes",
+	internalName = "rich-text-notes",
+	// Moves notes from ~/.runelite/rich-text-notes, where versions before 2.0 kept them
+	legacyDataDirectory = "rich-text-notes",
 	description = "Enhanced notes plugin with rich text formatting and item icons",
 	tags = {"notes", "rich", "text", "enhanced", "sidebar", "markdown"}
 )
@@ -64,7 +67,7 @@ public class RichTextNotesPlugin extends Plugin
 		try
 		{
 			// Initialize storage service with configManager
-			storageService = new FileStorageService(configManager, gson);
+			storageService = new FileStorageService(configManager, gson, getPluginDirectory());
 			cloudSyncService = new CloudSyncService(configManager, storageService);
 			cloudSyncService.pull();
 
