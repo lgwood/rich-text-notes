@@ -17,9 +17,11 @@ import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JTextPane;
 import javax.swing.text.AttributeSet;
+import javax.swing.text.IconView;
 import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.StyleConstants;
 import javax.swing.text.StyledDocument;
+import javax.swing.text.View;
 import org.junit.Test;
 
 public class NoteSerializerV2Test
@@ -69,6 +71,48 @@ public class NoteSerializerV2Test
 		assertEquals("Get  now", content.getText());
 		assertEquals(1, content.getIcons().size());
 		assertEquals(4, content.getIcons().get(0).getOffset());
+	}
+
+	@Test
+	public void iconsNextToFormattingAreDrawnAsIcons() throws Exception
+	{
+		// Shaped like the real editor's output: formatted text runs right up to each icon
+		NoteContentV2 content = new NoteContentV2();
+		StringBuilder text = new StringBuilder();
+		for (int i = 0; i < 6; i++)
+		{
+			NoteContentV2.Span span = new NoteContentV2.Span();
+			span.setStart(text.length());
+			span.setLength(4);
+			span.setColor("ffffff");
+			content.getSpans().add(span);
+			text.append("text");
+
+			NoteContentV2.ItemIcon icon = new NoteContentV2.ItemIcon();
+			icon.setOffset(text.length());
+			icon.setItemId(4151);
+			icon.setQuantity(1);
+			content.getIcons().add(icon);
+			text.append(i % 2 == 0 ? " " : " \n");
+		}
+		content.setText(text.toString());
+
+		JTextPane pane = new NotesEnhancedEditorKit(null).createTextPane();
+		NoteSerializerV2.toDocument(content, pane.getStyledDocument(), new FakeIconService());
+		View root = pane.getUI().getRootView(pane);
+		root.setSize(400, 1000);
+
+		assertEquals(6, countIconViews(root));
+	}
+
+	private static int countIconViews(View view)
+	{
+		int count = view instanceof IconView ? 1 : 0;
+		for (int i = 0; i < view.getViewCount(); i++)
+		{
+			count += countIconViews(view.getView(i));
+		}
+		return count;
 	}
 
 	@Test

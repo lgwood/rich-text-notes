@@ -3,8 +3,13 @@ package dev.seafoo.richtextnotes.services;
 import dev.seafoo.richtextnotes.models.NoteContentV2;
 import dev.seafoo.richtextnotes.ui.components.NotesEnhancedDocument;
 import java.awt.Color;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeSet;
 import javax.swing.Icon;
 import javax.swing.text.AttributeSet;
 import javax.swing.text.BadLocationException;
@@ -125,65 +130,99 @@ public final class NoteSerializerV2
 		throws BadLocationException
 	{
 		String text = content.getText() != null ? content.getText() : "";
-		doc.remove(0, doc.getLength());
-		doc.insertString(0, text, null);
 
 		// Spans and icons may come from another client, so skip anything missing or out of range
-		List<NoteContentV2.Span> spans = content.getSpans() != null ? content.getSpans() : Collections.emptyList();
-		List<NoteContentV2.ItemIcon> icons = content.getIcons() != null ? content.getIcons() : Collections.emptyList();
+		List<NoteContentV2.Span> spans = new ArrayList<>();
+		for (NoteContentV2.Span span : content.getSpans() != null ? content.getSpans() : Collections.<NoteContentV2.Span>emptyList())
+		{
+			if (span.getStart() >= 0 && span.getLength() > 0 && span.getStart() + span.getLength() <= text.length())
+			{
+				spans.add(span);
+			}
+		}
+		Map<Integer, NoteContentV2.ItemIcon> icons = new HashMap<>();
+		for (NoteContentV2.ItemIcon icon : content.getIcons() != null ? content.getIcons() : Collections.<NoteContentV2.ItemIcon>emptyList())
+		{
+			if (icon.getOffset() >= 0 && icon.getOffset() < text.length())
+			{
+				icons.put(icon.getOffset(), icon);
+			}
+		}
+
+		// Insert the text in pieces with their attributes, the way typing does. Setting attributes after
+		// inserting doesn't always rebuild the view, which left some icons drawn as plain text.
+		TreeSet<Integer> cuts = new TreeSet<>(Arrays.asList(0, text.length()));
 		for (NoteContentV2.Span span : spans)
 		{
-			if (span.getStart() < 0 || span.getLength() <= 0 || span.getStart() + span.getLength() > text.length())
-			{
-				continue;
-			}
-
-			SimpleAttributeSet attrs = new SimpleAttributeSet();
-			if (Boolean.TRUE.equals(span.getBold()))
-			{
-				StyleConstants.setBold(attrs, true);
-			}
-			if (Boolean.TRUE.equals(span.getItalic()))
-			{
-				StyleConstants.setItalic(attrs, true);
-			}
-			if (Boolean.TRUE.equals(span.getStrike()))
-			{
-				StyleConstants.setStrikeThrough(attrs, true);
-			}
-			if (span.getSize() != null)
-			{
-				StyleConstants.setFontSize(attrs, span.getSize());
-			}
-			if (span.getColor() != null)
-			{
-				try
-				{
-					StyleConstants.setForeground(attrs, new Color(Integer.parseInt(span.getColor(), 16)));
-				}
-				catch (NumberFormatException ignored)
-				{
-				}
-			}
-			doc.setCharacterAttributes(span.getStart(), span.getLength(), attrs, false);
+			cuts.add(span.getStart());
+			cuts.add(span.getStart() + span.getLength());
 		}
-
-		for (NoteContentV2.ItemIcon icon : icons)
+		for (int offset : icons.keySet())
 		{
-			if (icon.getOffset() < 0 || icon.getOffset() >= text.length())
-			{
-				continue;
-			}
-
-			SimpleAttributeSet attrs = new SimpleAttributeSet();
-			Icon image = iconService != null ? iconService.getCenteredIconById(icon.getItemId(), icon.getQuantity()) : null;
-			if (image != null)
-			{
-				StyleConstants.setIcon(attrs, image);
-			}
-			attrs.addAttribute(NotesEnhancedDocument.ICON_ATTRIBUTE,
-				new NotesEnhancedDocument.IconData(icon.getName(), icon.getItemId(), icon.getQuantity()));
-			doc.setCharacterAttributes(icon.getOffset(), 1, attrs, false);
+			cuts.add(offset);
+			cuts.add(offset + 1);
 		}
+
+		doc.remove(0, doc.getLength());
+		int pieceStart = 0;
+		for (int pieceEnd : cuts.tailSet(0, false))
+		{
+			SimpleAttributeSet attrs = new SimpleAttributeSet();
+			for (NoteContentV2.Span span : spans)
+			{
+				if (span.getStart() <= pieceStart && span.getStart() + span.getLength() >= pieceEnd)
+				{
+					addSpanAttributes(span, attrs);
+				}
+			}
+			NoteContentV2.ItemIcon icon = icons.get(pieceStart);
+			if (icon != null)
+			{
+				addIconAttributes(icon, attrs, iconService);
+			}
+			doc.insertString(pieceStart, text.substring(pieceStart, pieceEnd), attrs);
+			pieceStart = pieceEnd;
+		}
+	}
+
+	private static void addSpanAttributes(NoteContentV2.Span span, SimpleAttributeSet attrs)
+	{
+		if (Boolean.TRUE.equals(span.getBold()))
+		{
+			StyleConstants.setBold(attrs, true);
+		}
+		if (Boolean.TRUE.equals(span.getItalic()))
+		{
+			StyleConstants.setItalic(attrs, true);
+		}
+		if (Boolean.TRUE.equals(span.getStrike()))
+		{
+			StyleConstants.setStrikeThrough(attrs, true);
+		}
+		if (span.getSize() != null)
+		{
+			StyleConstants.setFontSize(attrs, span.getSize());
+		}
+		if (span.getColor() != null)
+		{
+			try
+			{
+				StyleConstants.setForeground(attrs, new Color(Integer.parseInt(span.getColor(), 16)));
+			}
+			catch (NumberFormatException ignored)
+			{
+			}
+		}
+	}
+
+	private static void addIconAttributes(NoteContentV2.ItemIcon icon, SimpleAttributeSet attrs, ItemIconService iconService)
+	{
+		Icon image = iconService != null ? iconService.getCenteredIconById(icon.getItemId(), icon.getQuantity()) : null;
+		if (image != null)
+		{
+			StyleConstants.setIcon(attrs, image);
+		}
+		attrs.addAttribute(NotesEnhancedDocument.ICON_ATTRIBUTE,
+			new NotesEnhancedDocument.IconData(icon.getName(), icon.getItemId(), icon.getQuantity()));
 	}
 }
